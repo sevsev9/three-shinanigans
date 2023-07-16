@@ -1,4 +1,4 @@
-# space_background
+# ThreeJS Shinanigans in Vue3 + Typescript
 
 This template should help get you started developing with Vue 3 in Vite.
 
