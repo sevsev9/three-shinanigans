@@ -1,0 +1,26 @@
+[
+    {
+        "address": "123 Main St",
+        "city": "Anytown",
+        "state": "CA",
+        "zip": "12345"
+    },
+    {
+        "address": "456 Elm St",
+        "city": "Othertown",
+        "state": "NY",
+        "zip": "67890"
+    },
+    {
+        "address": "789 Oak St",
+        "city": "Smalltown",
+        "state": "FL",
+        "zip": "12345"
+    },
+    {
+        "address": "321 Maple Ave",
+        "city": "Mediumtown",
+        "state": "NJ",
+        "zip": "67890"
+    }
+]

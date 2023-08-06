@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import * as THREE from "three";
 
@@ -34,6 +34,11 @@ export interface PointParams {
    * @example 1500
    */
   amount: number
+
+  /**
+   * The size of the point object
+   */
+  cube_size: [x: number, y: number, z: number]
 }
 
 export interface LightSourceParams {
@@ -48,18 +53,88 @@ export interface CameraSettings {
   far: number
 }
 
+/**
+ * This object defines an animation in relation to the mouse, scoll position and/or time.
+ */
+export interface AnimatedObject {
+  mesh: THREE.Mesh | THREE.Points,
+
+  /**
+   * The function that is called on each frame.
+   * 
+   * @param mouse The current mouse position
+   * @param scroll_pos The scroll position
+   * @param time The time
+   * @param mesh The mesh that is animated
+   */
+  animate: (mouse: { x: number, y: number }, scroll_pos: number, time: number, mesh: THREE.Mesh | THREE.Points) => void
+}
+
+
+const defaults = {
+  view_size: [10, 10, 10],
+  light: {
+    init_pos: [-1, 2, 4],
+    params: {
+      color: 0xffffff,
+      intensity: 1
+    }
+  } as Settings<LightSourceParams>,
+  points: {
+    init_pos: [0, 0, 0],
+    params: {
+      size: 0.07,
+      color: 0xffffff,
+      amount: 15000,
+      cube_size: [20, 40, 10]
+    }
+  } as Settings<PointParams>,
+  wire_sphere: {
+    init_pos: [-20, 0, -25],
+    params: {
+      radius: 5,
+      segments: 20,
+      rings: 15
+    },
+  } as Settings<SphereParams>,
+  moon: {
+    init_pos: [100, -150, -100],
+    params: {
+      radius: 25,
+      segments: 100,
+      rings: 100
+    }
+  } as Settings<SphereParams>
+}
+
 export const useThreeStore = defineStore('three', {
   state: () => {
     return {
       canvas: ref<HTMLCanvasElement>(),
 
+
+      /**
+       * This object contains the mouse position at all times.
+       */
       mouse: {
         x: 0,
         y: 0
-      }
+      },
+
+      /**
+       * This contains the scroll position at all times.
+       */
+      scroll_pos: 0,
     }
   },
   actions: {
+    getPositions() {
+      return {
+        mouse: this.mouse,
+        scroll: this.scroll_pos
+      }
+    },
+
     /**
      * This function constructs a moon object and returns it.
      * 
@@ -79,9 +154,9 @@ export const useThreeStore = defineStore('three', {
         color: 0xffffff,
         map: moon_texture,
         displacementMap: moon_dis_map,
-        displacementScale: 0.2,
+        displacementScale: 1,
         bumpMap: moon_dis_map,
-        bumpScale: 0.1,
+        bumpScale: 0.5,
         reflectivity: 0,
         shininess: 0,
       });
@@ -137,7 +212,7 @@ export const useThreeStore = defineStore('three', {
       points_geometry.setAttribute(
         "position",
         new THREE.Float32BufferAttribute(
-          this.getRandomParticlePos(amount),
+          this.getRandomParticlePos(amount, points_settings.params.cube_size),
           3 // vector length in flat array
         )
       );
@@ -203,13 +278,170 @@ export const useThreeStore = defineStore('three', {
       scene.add(axisHelper);
     },
 
+    // keeps track of the mouse position
+    mouseHandler(e: MouseEvent) {
+      this.$state.mouse.x = e.clientX;
+      this.$state.mouse.y = e.clientY;
+    },
 
-    // to keep track of the mouse position
-    addMouseListener() {
-      window.addEventListener("mousemove", (e: MouseEvent) => {
-        this.$state.mouse.x = e.clientX;
-        this.$state.mouse.y = e.clientY;
+    // keeps track of the scroll position
+    scrollHandler() {
+
+    },
+
+
+    /**
+     * Given a canvas, this object initializes the threejs scene.
+     * @param canvas The canvas element
+     * @param content_dom The dom to use the relative scroll from for animation
+     * @param camera_settings The camera settings
+     */
+    async initScene(
+      canvas: HTMLCanvasElement,
+      content_dom: HTMLElement,
+      show_axis_helper: boolean = false,
+      camera_settings: {
+        fov: number,
+        near: number,
+        far: number,
+        z_pos: number
+      } = {
+          fov: 60,
+          near: 0.1,
+          far: 1000,
+          z_pos: 10
+        }
+    ) {
+      const texture_loader = new THREE.TextureLoader();
+      const star_texture = await texture_loader.loadAsync("/sparkle_star.png");
+      const moon_texture = await texture_loader.loadAsync('/dis_map_moon_nasa_16_uint.png');
+      const moon_dis_map = await texture_loader.loadAsync('/nasa_moon_colors.png');
+
+      // add event listeners
+      content_dom.addEventListener('scroll', () => {
+        this.scroll_pos = content_dom.scrollTop
       });
-    }
+
+      window.addEventListener('mousemove', this.mouseHandler);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(
+        camera_settings.fov,
+        canvas.clientWidth / canvas.clientHeight,
+        camera_settings.near,
+        camera_settings.far
+      );
+
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+      renderer.setClearColor(0x000000, 1);
+
+      camera.position.z = camera_settings.z_pos;
+
+      if (show_axis_helper) {
+        this.addAxisHelper(scene);
+      }
+
+      const light = this.createLightSource(defaults.light);
+      const point = this.createPointsMesh(defaults.points, star_texture)
+      const sphere = this.createWireframeSphere(defaults.wire_sphere)
+      const moon = this.createMoonObject(defaults.moon, moon_texture, moon_dis_map)
+
+      scene.add(light);
+      scene.add(point);
+      scene.add(sphere);
+      scene.add(moon);
+
+      this.startRender(scene, camera, renderer, [
+        {
+          mesh: moon, animate: (mouse, scroll_pos, time, mesh) => {
+            // mouse and scroll based animation
+            moon.position.x = defaults.moon.init_pos[0] + (-mouse.x * 0.005);
+            moon.position.y = defaults.moon.init_pos[1] + (mouse.y * 0.005) + (scroll_pos * 0.1);
+
+            // rotate moon
+            moon.rotation.x = -(time * 0.05);
+            moon.rotation.y = -(time * 0.05);
+          }
+        },
+        {
+          mesh: point, animate: (mouse, scroll_pos, time, mesh) => {
+            // mouse and scroll based animation
+            mesh.position.y = (mouse.y * 0.0001) + scroll_pos * 0.001;
+            mesh.position.x = -mouse.x * 0.0001;
+
+            // time based animation
+            mesh.rotation.x = time * 0.01;
+            mesh.rotation.y = time * 0.01;
+          }
+        },
+        {
+          mesh: sphere,
+          animate(mouse, scroll_pos, time, mesh) {
+            // mouse based animation
+            mesh.position.x = defaults.wire_sphere.init_pos[0] + (mouse.x * 0.0001) + (scroll_pos * 0.001);
+            mesh.position.y = defaults.wire_sphere.init_pos[1] + (mouse.y * 0.0001) + (scroll_pos * 0.01);
+
+            // time based animation
+            mesh.rotation.x = (time * 0.06);
+            mesh.rotation.y = (time * 0.06);
+          },
+        }
+      ])
+    },
+
+    /**
+     * Returns true if the renderer was resized
+     * @param renderer A threejs renderer
+     */
+    resizeRendererToDisplaySize(renderer: THREE.Renderer): boolean {
+      const canvas = renderer.domElement;
+
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+
+      const needResize = canvas.width !== width || canvas.height !== height;
+
+      // resize only when necessary
+      if (needResize) {
+        //3rd parameter `false` to change the internal canvas size
+        renderer.setSize(width, height, false);
+      }
+      return needResize;
+    },
+
+
+    /**
+     * This method starts the render of the scene.
+     * 
+     * @param scene The threejs scene
+     * @param camera The threejs camera
+     * @param renderer The threejs renderer
+     */
+    startRender(scene: THREE.Scene, camera: THREE.PerspectiveCamera, renderer: THREE.Renderer, animated_objects: AnimatedObject[]) {
+      const resize = this.resizeRendererToDisplaySize;
+      const getPos = this.getPositions;
+
+      function render(time: number) {
+        time = time * 0.001;
+
+        if (resize(renderer)) {
+          const canvas = renderer.domElement;
+          camera.aspect = canvas.clientWidth / canvas.clientHeight;
+          camera.updateProjectionMatrix();
+        }
+
+        const { mouse, scroll } = getPos();
+        for (const anim of animated_objects) {
+          anim.animate(mouse, scroll, time, anim.mesh);
+        }
+
+        renderer.render(scene, camera);
+
+        requestAnimationFrame(render);
+      }
+
+      requestAnimationFrame(render);
+    },
   }
 });
